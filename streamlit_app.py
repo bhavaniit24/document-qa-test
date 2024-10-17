@@ -109,17 +109,13 @@ def find_preprint_3(title):
             for hit in data["result"]["hits"]["hit"]:
                 info = hit["info"]
                 title = info.get("title", "Title not available")
-
-                # Fix: Extract the "author" names properly from dictionaries
-                authors = ", ".join([author["text"] for author in info.get("authors", {}).get("author", [])])
-
                 year = info.get("year", "Year not available")
                 venue = info.get("venue", "Venue not available")
                 url = info.get("url", "URL not available")
 
                 results.append({
                     "Title": title,
-                    "Authors": authors,
+                    "Authors": [],
                     "Year": year,
                     "Venue": venue,
                     "URL": url,
