@@ -1,7 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import requests
-
+import urllib
 
 def find_preprint_1(title):
     url = f"https://api.unpaywall.org/v2/search?query={urllib.parse.quote_plus(title)}&email=unpaywall_01@example.com"
