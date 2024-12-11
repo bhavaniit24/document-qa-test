@@ -13,7 +13,7 @@ from langchain.agents import (
     create_react_agent,
 )
 from langchain.chat_models import init_chat_model
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain_community.agent_toolkits.load_tools import load_tools
 from langchain_community.document_loaders import (
     ArxivLoader,
@@ -34,8 +34,6 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from markdown2 import markdown
 from openai import OpenAI
-from scidownl import scihub_download
-from weasyprint import HTML
 
 
 class ResearchPaperRetriever(BaseRetriever):
@@ -54,11 +52,11 @@ class ResearchPaperRetriever(BaseRetriever):
 
 class ResearchApp:
 
-    def __init__(self, model_name: str = "gpt-4o-mini"):
-        self.search_api = GoogleSearchAPIWrapper()
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini"):
         self.model_name = model_name
-        self.client = OpenAI()
+        self.client = OpenAI(api_key=api_key)
         self.llm = ChatOpenAI(
+            api_key=api_key,
             model=model_name,
         )
 
@@ -71,14 +69,6 @@ class ResearchApp:
         ai_msg = structured_llm.invoke(query)
         return ai_msg
 
-    def google_search(self, query: str) -> str:
-        tool = Tool(
-            name="google_search",
-            description="Search Google for recent results.",
-            func=self.search_api.run,
-        )
-        return tool.run(query)
-
     def ddg_search(self, query: str) -> str:
         tools = load_tools(["ddg-search"])
         prompt = hub.pull("hwchase17/react")
@@ -88,24 +78,6 @@ class ResearchApp:
         )
         response = agent_executor.invoke({"input": query})
         return response["output"]
-
-    def download_scihub_pdf(
-        self, doi: str, base_directory: str = "/content/scihub/"
-    ) -> str:
-        paper_url = f"https://doi.org/{doi}"
-        out_filename = f"paper_{doi.replace('/', '-')}.pdf"
-        out_path = base_directory + out_filename
-
-        try:
-            scihub_download(
-                paper_url,
-                paper_type="doi",
-                out=out_path,
-                proxies={"http": "socks5://127.0.0.1:7890"},
-            )
-            return f"Downloaded: {doi} to {out_path}"
-        except Exception as e:
-            return f"Failed to download {doi}: {e}"
 
     def extract_text_from_pdf(self, pdf_file: BytesIO) -> str:
         doc = fitz.open(stream=pdf_file, filetype="pdf")
@@ -189,6 +161,29 @@ class ResearchApp:
         full_content = " ".join(page_contents)
         return full_content
 
+    def get_current_file_full_content(self, selected_file):
+        try:
+            return selected_file.read().decode()
+        except Exception as e:
+            print("Failed", e)
+
+        try:
+            import PyPDF2
+
+            # Read the PDF file
+            pdf_reader = PyPDF2.PdfReader(selected_file)
+            # Extract the content
+            content = ""
+            for page in range(pdf_reader.getNumPages()):
+                content += pdf_reader.getPage(page).extractText()
+
+            # Display the content
+            return content
+        except Exception as e:
+            print("Failed", e)
+
+        return "Failed"
+
     def openai_chat_completion(self, messages, type="text"):
         response = self.client.chat.completions.create(
             model=self.model_name,
@@ -243,6 +238,18 @@ class ResearchApp:
 
         return final_prompt
 
+    def doc_loader(self, doc_path):
+        file_extension = os.path.splitext(doc_path)[1]
+
+        if file_extension == ".pdf":
+            loader = PyMuPDFLoader(doc_path)
+        if file_extension == ".eml":
+            loader = UnstructuredEmailLoader(doc_path)
+        else:
+            loader = TextLoader(doc_path)
+
+        return loader.load()
+
     def get_retriever(
         self,
         doc_path,
@@ -253,16 +260,7 @@ class ResearchApp:
         collection_name="rag_example",
         persist_directory="./chromadb",
     ):
-        file_extension = os.path.splitext(doc_path)[1]
-
-        if file_extension == ".pdf":
-            loader = PyMuPDFLoader(doc_path)
-        if file_extension == ".eml":
-            loader = UnstructuredEmailLoader(doc_path)
-        else:
-            loader = TextLoader(doc_path)
-
-        documents = loader.load()
+        documents = self.doc_loader(doc_path)
 
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
@@ -294,23 +292,6 @@ class ResearchApp:
         )
 
         return rag_chain.invoke(query)
-
-    def generate_pdf_report(
-        self, title: str, markdown_content: str, output_pdf_path: str
-    ):
-        html_content = f"""<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>{title}</title>
-        </head>
-        <body>
-        {markdown(markdown_content)}
-        </body>
-        </html>"""
-
-        HTML(string=html_content).write_pdf(output_pdf_path)
-        print(f"PDF generated successfully at: {output_pdf_path}")
 
     def get_llm(self, model_name, provider):
         return init_chat_model(model_name, model_provider=provider, temperature=0)
